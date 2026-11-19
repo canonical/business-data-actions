@@ -1,0 +1,130 @@
+name: Retain reviewers
+
+# Keeps review requests standing until a pull request has enough approvals.
+# See docs/workflows/retain-reviewers.md.
+
+on:
+  workflow_call:
+    inputs:
+      required-approvals:
+        description: Number of approvals after which review requests are no longer renewed
+        type: number
+        default: 2
+      team-reviewers:
+        description: Team slugs without the `@org/` prefix, comma/whitespace separated or a JSON array
+        type: string
+        default: ""
+      reviewers:
+        description: GitHub usernames, comma/whitespace separated or a JSON array
+        type: string
+        default: ""
+    secrets:
+      REVIEW_REASSIGN_TOKEN:
+        description: Fine-grained PAT with `Pull requests` read/write and organization `Members` read
+        required: false
+
+permissions: {}
+
+jobs:
+  retain-reviewers:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    if: github.event.pull_request != null
+    concurrency:
+      group: retain-reviewers-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Re-request reviewers
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          HAS_TOKEN: ${{ secrets.REVIEW_REASSIGN_TOKEN != '' }}
+          REQUIRED_APPROVALS: ${{ inputs.required-approvals }}
+          TEAM_REVIEWERS: ${{ inputs.team-reviewers }}
+          REVIEWERS: ${{ inputs.reviewers }}
+        with:
+          # Fallback only lets the client initialise; the script exits before any API call.
+          github-token: ${{ secrets.REVIEW_REASSIGN_TOKEN || github.token }}
+          script: |
+            const parseList = (raw) => {
+              const text = (raw || '').trim();
+              if (!text) return [];
+              const items = text.startsWith('[') ? JSON.parse(text) : text.split(/[\s,]+/);
+              return [...new Set(items.map((s) => String(s).trim()).filter(Boolean))];
+            };
+
+            if (process.env.HAS_TOKEN !== 'true') {
+              core.notice('REVIEW_REASSIGN_TOKEN is not available; skipping.');
+              return;
+            }
+
+            const required = Number(process.env.REQUIRED_APPROVALS);
+            const teams = parseList(process.env.TEAM_REVIEWERS).map((t) => t.replace(/^@?[^/]+\//, ''));
+            const users = parseList(process.env.REVIEWERS).map((u) => u.replace(/^@/, ''));
+            if (teams.length === 0 && users.length === 0) {
+              core.notice('No team-reviewers or reviewers configured; nothing to do.');
+              return;
+            }
+
+            const pr = context.payload.pull_request;
+            if (pr.state !== 'open' || pr.draft) {
+              core.info(`PR is ${pr.draft ? 'a draft' : pr.state}; skipping.`);
+              return;
+            }
+            if (context.payload.review?.state?.toLowerCase() === 'changes_requested') {
+              core.info('Submitted review requests changes; skipping.');
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            const pull_number = pr.number;
+            const author = pr.user.login.toLowerCase();
+
+            // Latest decisive state per reviewer. COMMENTED never overrides an earlier decision;
+            // DISMISSED clears it.
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner, repo, pull_number, per_page: 100,
+            });
+            const decisions = new Map();
+            for (const review of reviews) {
+              const login = review.user?.login?.toLowerCase();
+              if (!login || login === author) continue;
+              if (review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED') {
+                decisions.set(login, review.state);
+              } else if (review.state === 'DISMISSED') {
+                decisions.delete(login);
+              }
+            }
+            const approvers = [...decisions].filter(([, s]) => s === 'APPROVED').map(([l]) => l);
+            const blockers = [...decisions].filter(([, s]) => s === 'CHANGES_REQUESTED').map(([l]) => l);
+            core.info(`Approvals: ${approvers.length}/${required} (${approvers.join(', ') || 'none'}).`);
+
+            if (approvers.length >= required) {
+              core.info('Required approvals reached; leaving review requests cleared.');
+              return;
+            }
+            if (blockers.length > 0) {
+              core.info(`Changes requested by ${blockers.join(', ')}; skipping.`);
+              return;
+            }
+
+            // Only request what is not already pending, to avoid redundant notifications.
+            const { data: pending } = await github.rest.pulls.listRequestedReviewers({
+              owner, repo, pull_number,
+            });
+            const pendingTeams = new Set(pending.teams.map((t) => t.slug.toLowerCase()));
+            const pendingUsers = new Set(pending.users.map((u) => u.login.toLowerCase()));
+            const skipUsers = new Set([author, ...approvers, ...pendingUsers]);
+
+            const team_reviewers = teams.filter((t) => !pendingTeams.has(t.toLowerCase()));
+            const reviewersToRequest = users.filter((u) => !skipUsers.has(u.toLowerCase()));
+            if (team_reviewers.length === 0 && reviewersToRequest.length === 0) {
+              core.info('All configured reviewers already have standing requests.');
+              return;
+            }
+
+            await github.rest.pulls.requestReviewers({
+              owner, repo, pull_number, team_reviewers, reviewers: reviewersToRequest,
+            });
+            core.info(
+              `Requested teams: [${team_reviewers.join(', ')}], users: [${reviewersToRequest.join(', ')}].`,
+            );

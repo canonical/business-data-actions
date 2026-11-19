@@ -1,0 +1,20 @@
+name: Review requests
+
+# Uses retain-reviewers.yaml on this repository's pull requests; this is also its self-test.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions: {}
+
+jobs:
+  retain-reviewers:
+    uses: ./.github/workflows/retain-reviewers.yaml
+    with:
+      required-approvals: 2
+      team-reviewers: business-data-data-lake, business-data-integrations
+    secrets:
+      REVIEW_REASSIGN_TOKEN: ${{ secrets.REVIEW_REASSIGN_TOKEN }}
