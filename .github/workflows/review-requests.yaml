@@ -1,0 +1,21 @@
+name: Review requests
+
+# Dogfoods retain-reviewers.yaml on this repository's pull requests.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions: {}
+
+jobs:
+  retain-reviewers:
+    # Local path on purpose: this caller lives in the same repository and commit as the workflow.
+    uses: ./.github/workflows/retain-reviewers.yaml
+    with:
+      required-approvals: 2
+      team-reviewers: business-data-data-lake, business-data-integrations
+    secrets:
+      REVIEW_REASSIGN_TOKEN: ${{ secrets.REVIEW_REASSIGN_TOKEN }}
