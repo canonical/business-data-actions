@@ -8,6 +8,7 @@ Shared GitHub Actions reusable workflows and composite actions for the Business 
 
 | Workflow | Description |
 |----------|-------------|
+| [`retain-reviewers`](docs/workflows/retain-reviewers.md) | Re-requests teams/users on a PR until it has the required approvals |
 
 ### Composite actions
 

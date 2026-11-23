@@ -5,11 +5,11 @@
 | Path | Contents |
 |------|----------|
 | `.github/workflows/<name>.yaml` | Reusable workflows (`on: workflow_call`) |
-| `.github/workflows/test-<name>.yaml` | Self-test for a reusable workflow or action |
+| `.github/workflows/test-<name>.yaml` | Self-test, when this repository does not already use it |
 | `.github/workflows/ci.yaml`, `release.yaml` | This repository's own CI and release |
 | `actions/<name>/action.yaml` | Composite actions |
 | `actions/<name>/scripts/` | Optional helper scripts (`.sh` or `.py`) |
-| `actions/<name>/README.md` | Inputs, outputs and a usage example |
+| `docs/workflows/<name>.md`, `docs/actions/<name>.md` | Inputs, outputs, setup and a usage example |
 
 Reusable workflows must live directly in `.github/workflows/`; GitHub does not support
 subdirectories. Do not start their names with `ci`, `release` or `test-`.
@@ -18,8 +18,9 @@ subdirectories. Do not start their names with `ci`, `release` or `test-`.
 
 - Use the `.yaml` extension.
 - Use kebab-case names for workflows, actions, inputs and outputs.
-- Every new reusable workflow or action gets a `test-<name>.yaml` workflow and a catalog entry
-  in [README.md](README.md).
+- Every new reusable workflow or action is exercised by a workflow in this repository, and has a
+  catalog entry in [README.md](README.md) and a doc in [docs/](docs). When this repository uses
+  it on its own events, that caller is the test. Otherwise, add a `test-<name>.yaml`.
 
 ## Dependencies and pinning
 
